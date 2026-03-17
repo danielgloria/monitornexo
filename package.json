@@ -1,7 +1,7 @@
 {
-  "name": "uti-monitor",
-  "version": "1.0.0",
-  "description": "Sistema de Monitoramento Assistencial UTI Adulto",
+  "name": "monitor-nexo",
+  "version": "2.0.0",
+  "description": "Monitor NEXO — Plataforma de Monitoramento Assistencial",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,9 +9,15 @@
   },
   "dependencies": {
     "better-sqlite3": "^9.4.3",
-    "express": "^4.18.2"
+    "bcryptjs": "^2.4.3",
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "nodemailer": "^6.9.7"
   },
   "devDependencies": {
     "nodemon": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

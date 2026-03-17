@@ -1,0 +1,7 @@
+node_modules/
+uti.db
+uti.db-shm
+uti.db-wal
+*.pyc
+__pycache__/
+.env
