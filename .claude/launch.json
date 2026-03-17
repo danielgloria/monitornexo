@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "UTI Monitor (Flask)",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["app.py"],
+      "port": 3000
+    }
+  ]
+}
