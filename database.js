@@ -1,38 +1,79 @@
 /**
- * Monitor NEXO — Database Layer (Node.js / better-sqlite3)
+ * Monitor NEXO — Database Layer (Node.js / sqlite3 async)
  * Schema: utis, leitos, ocupacoes, checklists, usuarios, tokens_aprovacao, sessions
  */
 
-const Database = require('better-sqlite3');
+const sqlite3 = require('sqlite3').verbose();
 const path     = require('path');
 const bcrypt   = require('bcryptjs');
 
 const DB_PATH = path.join(__dirname, 'uti.db');
 
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const db = new sqlite3.Database(DB_PATH);
+
+// ─── Promise wrappers ────────────────────────
+
+/** db.run → { lastID, changes } */
+function dbRun(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) return reject(err);
+      resolve({ lastID: this.lastID, changes: this.changes });
+    });
+  });
+}
+
+/** db.get → row | undefined */
+function dbGet(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) return reject(err);
+      resolve(row);
+    });
+  });
+}
+
+/** db.all → rows[] */
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+}
+
+/** db.exec (multi-statement) */
+function dbExec(sql) {
+  return new Promise((resolve, reject) => {
+    db.exec(sql, (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+}
 
 // ─────────────────────────────────────────────
 //  MIGRATION — detect old schema and rename
 // ─────────────────────────────────────────────
 
-function migrateDb() {
-  const cols = db.pragma('table_info(checklists)').map(c => c.name);
+async function migrateDb() {
+  const cols = await dbAll("PRAGMA table_info(checklists)");
+  const colNames = cols.map(c => c.name);
 
   // Old v1 schema has paciente_id instead of ocupacao_id
-  if (cols.length && cols.includes('paciente_id') && !cols.includes('ocupacao_id')) {
-    try { db.exec('ALTER TABLE checklists RENAME TO checklists_v1_legacy'); } catch (_) {}
+  if (colNames.length && colNames.includes('paciente_id') && !colNames.includes('ocupacao_id')) {
+    try { await dbExec('ALTER TABLE checklists RENAME TO checklists_v1_legacy'); } catch (_) {}
   }
 
   // Old patients table
-  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='patients'").get();
-  if (tables) {
-    try { db.exec('ALTER TABLE patients RENAME TO patients_v1_legacy'); } catch (_) {}
+  const oldTable = await dbGet("SELECT name FROM sqlite_master WHERE type='table' AND name='patients'");
+  if (oldTable) {
+    try { await dbExec('ALTER TABLE patients RENAME TO patients_v1_legacy'); } catch (_) {}
   }
 
   // If new schema exists but missing new columns, add them
-  if (cols.length && cols.includes('ocupacao_id')) {
+  if (colNames.length && colNames.includes('ocupacao_id')) {
     const newCols = {
       reavaliacao_atb: 'TEXT',
       dias_vm: 'INTEGER',
@@ -41,8 +82,8 @@ function migrateDb() {
       previsao_alta: 'TEXT',
     };
     for (const [col, type] of Object.entries(newCols)) {
-      if (!cols.includes(col)) {
-        try { db.exec(`ALTER TABLE checklists ADD COLUMN ${col} ${type}`); } catch (_) {}
+      if (!colNames.includes(col)) {
+        try { await dbExec(`ALTER TABLE checklists ADD COLUMN ${col} ${type}`); } catch (_) {}
       }
     }
   }
@@ -52,8 +93,8 @@ function migrateDb() {
 //  SCHEMA — create all tables
 // ─────────────────────────────────────────────
 
-function createTables() {
-  db.exec(`
+async function createTables() {
+  await dbExec(`
     CREATE TABLE IF NOT EXISTS utis (
       id    INTEGER PRIMARY KEY AUTOINCREMENT,
       nome  TEXT NOT NULL UNIQUE,
@@ -146,7 +187,7 @@ function createTables() {
 //  SEED — UTIs, leitos, admin user
 // ─────────────────────────────────────────────
 
-function seedData() {
+async function seedData() {
   const ADMIN_EMAIL    = 'danielvgloria@gmail.com';
   const ADMIN_PASSWORD = 'Kamila@221093';
 
@@ -156,28 +197,25 @@ function seedData() {
     { nome: 'UTI 3', leitos: 10 },
   ];
 
-  const insertUti   = db.prepare('INSERT INTO utis (nome) VALUES (?)');
-  const insertLeito = db.prepare('INSERT INTO leitos (uti_id, numero) VALUES (?, ?)');
-  const checkUti    = db.prepare('SELECT id FROM utis WHERE nome = ?');
-
   for (const cfg of utiConfig) {
-    const existing = checkUti.get(cfg.nome);
+    const existing = await dbGet('SELECT id FROM utis WHERE nome = ?', [cfg.nome]);
     if (!existing) {
-      const result = insertUti.run(cfg.nome);
-      const utiId = result.lastInsertRowid;
+      const result = await dbRun('INSERT INTO utis (nome) VALUES (?)', [cfg.nome]);
+      const utiId = result.lastID;
       for (let i = 1; i <= cfg.leitos; i++) {
-        insertLeito.run(utiId, String(i).padStart(2, '0'));
+        await dbRun('INSERT INTO leitos (uti_id, numero) VALUES (?, ?)', [utiId, String(i).padStart(2, '0')]);
       }
     }
   }
 
   // Seed admin user
-  const adminExists = db.prepare('SELECT id FROM usuarios WHERE email = ?').get(ADMIN_EMAIL);
+  const adminExists = await dbGet('SELECT id FROM usuarios WHERE email = ?', [ADMIN_EMAIL]);
   if (!adminExists) {
     const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-    db.prepare(
-      'INSERT INTO usuarios (nome, email, senha_hash, perfil, status) VALUES (?, ?, ?, ?, ?)'
-    ).run('Administrador', ADMIN_EMAIL, hash, 'admin', 'aprovado');
+    await dbRun(
+      'INSERT INTO usuarios (nome, email, senha_hash, perfil, status) VALUES (?, ?, ?, ?, ?)',
+      ['Administrador', ADMIN_EMAIL, hash, 'admin', 'aprovado']
+    );
     console.log('[SEED] Admin user created:', ADMIN_EMAIL);
   }
 }
@@ -186,11 +224,15 @@ function seedData() {
 //  INIT
 // ─────────────────────────────────────────────
 
-function initDb() {
-  migrateDb();
-  createTables();
-  seedData();
+async function initDb() {
+  // Enable WAL and foreign keys
+  await dbRun('PRAGMA journal_mode = WAL');
+  await dbRun('PRAGMA foreign_keys = ON');
+
+  await migrateDb();
+  await createTables();
+  await seedData();
   console.log('[DB] Database initialized successfully');
 }
 
-module.exports = { db, initDb };
+module.exports = { db, dbRun, dbGet, dbAll, dbExec, initDb };
