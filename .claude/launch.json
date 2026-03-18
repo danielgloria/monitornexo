@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "UTI Monitor (Flask)",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["app.py"],
+      "name": "Monitor NEXO",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": ["C:\\Users\\Users\\.claude\\uti-monitor\\server.js"],
       "port": 3000
     }
   ]

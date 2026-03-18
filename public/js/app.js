@@ -14,10 +14,10 @@ const API = '/api';
 const state = {
   page:         'home',
   utis:         [],
-  currentBeds:  [],           // beds loaded for current UTI
+  currentBeds:  [],
   currentUtiId: null,
-  checklistCtx: null,         // { leitoId, ocupacaoId, nomePaciente, leitoNumero, utiNome }
-  dischargeCtx: null,         // { ocupacaoId, leitoId, utiId, motivo }
+  checklistCtx: null,
+  dischargeCtx: null,
   charts:       {},
   dashFilter:   { utiId: '', start: thirtyDaysAgo(), end: todayISO() },
   recFilter:    { utiId: '', di: thirtyDaysAgo(), df: todayISO(), motivo: '' }
@@ -70,7 +70,8 @@ const LABELS = {
   profilaxia_tev:          { farmacologica:'Farmacológica', mecanica:'Mecânica', nao_indicada:'Não indicada', nao_realizada:'Não realizada' },
   profilaxia_ue:           { sim:'Sim', nao:'Não', nao_indicado:'Não indicado' },
   mobilizacao:             { acamado:'Acamado', sedestacao:'Sedestação', ortostatismo:'Ortostatismo', deambulacao:'Deambulação' },
-  dispositivos_necessarios:{ sim:'Sim', nao:'Não' }
+  dispositivos_necessarios:{ sim:'Sim', nao:'Não' },
+  previsao_alta:           { alta_hoje:'Alta hoje', alta_24h:'Alta em 24h', alta_48h:'Alta em 48h', alta_72h:'Alta em 72h', sem_previsao:'Sem previsão', paliativos:'Cuidados paliativos' }
 };
 function lbl(field, val) { return LABELS[field]?.[val] ?? val ?? '—'; }
 
@@ -81,10 +82,7 @@ function lbl(field, val) { return LABELS[field]?.[val] ?? val ?? '—'; }
 async function apiFetch(path, opts={}) {
   const res = await fetch(API+path, { headers:{'Content-Type':'application/json'}, ...opts });
   const data = await res.json().catch(()=>({}));
-  if (!res.ok) {
-    if (data.auth_required) { showLogin(); throw new Error('Sessao expirada'); }
-    throw new Error(data.error || `Erro ${res.status}`);
-  }
+  if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
   return data;
 }
 const api = {
@@ -147,7 +145,7 @@ async function handleRoute() {
     a.classList.toggle('active', active);
   });
 
-  const titles = { home:'Inicio', uti:'Leitos da UTI', checklist:'Checklist Diario', registros:'Registros', dashboard:'Dashboard', admin:'Gestao de Usuarios' };
+  const titles = { home:'Inicio', uti:'Leitos da UTI', checklist:'Checklist Diario', registros:'Registros', dashboard:'Dashboard' };
   document.getElementById('topbar-title').textContent = titles[page] || page;
 
   const main = document.getElementById('main-content');
@@ -156,10 +154,9 @@ async function handleRoute() {
   try {
     if      (page==='home')      await renderHome();
     else if (page==='uti')       await renderUTI(parseInt(parts[1]));
-    else if (page==='checklist') await renderChecklist(parseInt(parts[2])); // checklist/leito/{id}
+    else if (page==='checklist') await renderChecklist(parseInt(parts[2]));
     else if (page==='registros') await renderRegistros();
     else if (page==='dashboard') await renderDashboard();
-    else if (page==='admin')     await renderAdmin();
     else main.innerHTML = '<p style="padding:40px;color:var(--text-muted)">Pagina nao encontrada.</p>';
   } catch(err) {
     main.innerHTML = `<div style="padding:40px;color:var(--danger)">Erro ao carregar: ${escHtml(err.message)}</div>`;
@@ -463,10 +460,8 @@ function goChecklistFromBed(leitoId, ocupacaoId, nomePaciente, leitoNumero, utiN
 async function renderChecklist(leitoId) {
   const main = document.getElementById('main-content');
 
-  // Resolve context: from state or fetch current occupation for this leito
   let ctx = state.checklistCtx;
   if (!ctx || ctx.leitoId !== leitoId) {
-    // Need to resolve occupation from bed
     const utis  = await api.get('/utis');
     let   found = null;
     for (const u of utis) {
@@ -505,7 +500,6 @@ async function renderChecklist(leitoId) {
 
   main.innerHTML = `
     <div class="checklist-form" id="checklist-wrapper">
-      <!-- Context header -->
       <div class="card" style="margin-bottom:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <button class="back-btn" onclick="navigate('uti/${state.currentUtiId||1}')">← ${escHtml(ctx.utiNome||'UTI')}</button>
         <div style="flex:1">
@@ -608,11 +602,12 @@ async function renderChecklist(leitoId) {
 
         ${clSection('📋','Planejamento Assistencial',`
           ${clRow('previsao_alta','Previsão de Alta da UTI',[
-            {v:'hoje',l:'Alta hoje',c:'success'},
-            {v:'24h',l:'Alta em 24h',c:'teal'},
-            {v:'48h',l:'Alta em 48h',c:'warning'},
-            {v:'72h',l:'72h',c:'warning'},
-            {v:'indefinida',l:'Indefinida',c:'danger'}])}
+            {v:'alta_hoje',l:'Alta hoje',c:'success'},
+            {v:'alta_24h',l:'Alta em 24h',c:'teal'},
+            {v:'alta_48h',l:'Alta em 48h',c:'warning'},
+            {v:'alta_72h',l:'Alta em 72h',c:'warning'},
+            {v:'sem_previsao',l:'Sem previsão',c:'danger'},
+            {v:'paliativos',l:'Cuidados paliativos',c:'neutral'}])}
         `)}
 
         <div class="cl-footer">
@@ -639,7 +634,7 @@ async function renderChecklist(leitoId) {
   document.getElementById('checklist-form').addEventListener('submit', saveChecklist);
 }
 
-// ─── Checklist helpers (same as v1) ──────────
+// ─── Checklist helpers ──────────────────────
 
 function clSection(icon, title, body) {
   return `<div class="cl-section">
@@ -691,7 +686,6 @@ function setChecklistValues(data) {
     if (!data[f]) return;
     document.querySelector(`.btn-option[data-field="${f}"][data-value="${data[f]}"]`)?.click();
   });
-  // Multi-select: reavaliacao_atb (comma-separated)
   if (data.reavaliacao_atb) {
     data.reavaliacao_atb.split(',').forEach(v => {
       document.querySelector(`.btn-option[data-field="reavaliacao_atb"][data-value="${v.trim()}"]`)?.click();
@@ -712,7 +706,6 @@ function getChecklistValues() {
     const active = document.querySelector(`.btn-option[data-field="${f}"].active`);
     data[f] = active ? active.dataset.value : null;
   });
-  // Multi-select: reavaliacao_atb
   const reavBtns = document.querySelectorAll('.btn-option[data-field="reavaliacao_atb"].active');
   data.reavaliacao_atb = reavBtns.length ? Array.from(reavBtns).map(b=>b.dataset.value).join(',') : null;
   return data;
@@ -931,7 +924,6 @@ async function renderDashboard() {
       <button class="btn btn-outline" id="dash-export-btn">⬇ CSV</button>
     </div>
 
-    <!-- Occupation per UTI -->
     <div class="section-title">Ocupação por Unidade</div>
     <div class="occ-grid">
       ${(data.occ_stats||[]).map(u=>{
@@ -950,7 +942,6 @@ async function renderDashboard() {
       }).join('')}
     </div>
 
-    <!-- KPI Checklist -->
     <div class="section-title" style="margin-top:8px">Indicadores do Período (${fmtDate(start)} – ${fmtDate(end)})</div>
 
     <div class="kpi-section-label">Resumo Geral</div>
@@ -990,7 +981,8 @@ async function renderDashboard() {
       ${kpiCard('Profilaxia TEV', fmtPct(s.prof_tev_ok,tot), '', 'success', tot?`${s.prof_tev_ok||0} de ${tot} checklists`:'')}
     </div>
 
-    <!-- Charts -->
+    ${renderPrevisaoAlta(data.previsao_alta || {})}
+
     <div class="charts-grid">
       <div class="chart-card chart-card--wide"><h3>📋 Adesão ao Checklist (%)</h3><canvas id="chart-preenchimento"></canvas></div>
       <div class="chart-card"><h3>📈 VM Invasiva &amp; Antibiótico (%)</h3><canvas id="chart-vm-atb"></canvas></div>
@@ -1015,6 +1007,85 @@ async function renderDashboard() {
   drawTrendCharts(data.trends||[]);
 }
 
+function renderPrevisaoAlta(pa) {
+  const resumo = pa.resumo || {};
+  const pacientes = pa.pacientes || [];
+
+  const cats = [
+    { key:'alta_hoje',     label:'Alta hoje',           icon:'🟢', color:'success' },
+    { key:'alta_24h',      label:'Alta em 24h',         icon:'🔵', color:'teal' },
+    { key:'alta_48h',      label:'Alta em 48h',         icon:'🟡', color:'warning' },
+    { key:'alta_72h',      label:'Alta em 72h',         icon:'🟠', color:'warning' },
+    { key:'sem_previsao',  label:'Sem previsão',        icon:'🔴', color:'danger' },
+    { key:'paliativos',    label:'Cuidados paliativos', icon:'🟣', color:'neutral' }
+  ];
+
+  const totalComPrevisao = pacientes.length;
+  const comAlta = (resumo.alta_hoje||0) + (resumo.alta_24h||0) + (resumo.alta_48h||0) + (resumo.alta_72h||0);
+
+  const kpis = cats.map(c =>
+    `<div class="kpi-card ${c.color}">
+      <div class="kpi-label">${c.icon} ${escHtml(c.label)}</div>
+      <div class="kpi-value">${resumo[c.key]||0}</div>
+      <div class="kpi-sub">paciente${(resumo[c.key]||0)!==1?'s':''}</div>
+    </div>`
+  ).join('');
+
+  const pacComAlta = pacientes.filter(p =>
+    ['alta_hoje','alta_24h','alta_48h','alta_72h'].includes(p.previsao_alta)
+  );
+  const pacSemAlta = pacientes.filter(p =>
+    ['sem_previsao','paliativos'].includes(p.previsao_alta)
+  );
+  const todosOrdenados = [...pacComAlta, ...pacSemAlta];
+
+  const previsaoLabel = {
+    alta_hoje:'Alta hoje', alta_24h:'Alta em 24h', alta_48h:'Alta em 48h',
+    alta_72h:'Alta em 72h', sem_previsao:'Sem previsão', paliativos:'Cuidados paliativos'
+  };
+  const previsaoColor = {
+    alta_hoje:'success', alta_24h:'teal', alta_48h:'warning',
+    alta_72h:'warning', sem_previsao:'danger', paliativos:'neutral'
+  };
+
+  let tabelaHtml = '';
+  if (todosOrdenados.length) {
+    const rows = todosOrdenados.map(p => {
+      const badgeColor = previsaoColor[p.previsao_alta] || 'neutral';
+      const badgeLabel = previsaoLabel[p.previsao_alta] || p.previsao_alta || '—';
+      return `<tr>
+        <td><strong>${escHtml(p.nome_paciente)}</strong></td>
+        <td style="text-align:center">${escHtml(p.leito_numero)}</td>
+        <td>${escHtml(p.uti_nome)}</td>
+        <td><span class="badge badge-${badgeColor}">${escHtml(badgeLabel)}</span></td>
+      </tr>`;
+    }).join('');
+    tabelaHtml = `
+      <div class="table-wrap" style="overflow-x:auto;margin-top:12px">
+        <table>
+          <thead><tr>
+            <th>Paciente</th><th>Leito</th><th>UTI</th><th>Previsão de Alta</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } else {
+    tabelaHtml = `<div class="empty-state" style="padding:24px"><span class="empty-icon">📋</span><p style="color:var(--text-muted)">Nenhum paciente com previsão de alta registrada.</p></div>`;
+  }
+
+  return `
+    <div class="section-title" style="margin-top:8px">🏥 Previsão de Alta da UTI</div>
+    <div class="kpi-grid kpi-grid-3" style="margin-bottom:12px">${kpis}</div>
+    <div class="card" style="padding:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <h3 style="margin:0;font-size:.95rem">Pacientes Internados — Previsão de Alta</h3>
+        <span class="badge badge-primary">${totalComPrevisao} paciente${totalComPrevisao!==1?'s':''}</span>
+        ${comAlta ? `<span class="badge badge-success">${comAlta} com previsão de alta</span>` : ''}
+      </div>
+      ${tabelaHtml}
+    </div>`;
+}
+
 function kpiCard(label, value, unit, color='primary', sub='') {
   return `<div class="kpi-card ${color}">
     <div class="kpi-label">${escHtml(label)}</div>
@@ -1029,7 +1100,6 @@ function drawTrendCharts(trends) {
   const totals = trends.map(t=>t.total||1);
   const pcts   = key => trends.map((t,i)=>totals[i]?Math.round((t[key]||0)/totals[i]*100):0);
 
-  // Checklist completion rate: checklists filled / active patients that day
   const fillPcts = trends.map(t => {
     const ativos = t.ativos_no_dia || t.total || 1;
     return ativos ? Math.round((t.total||0) / ativos * 100) : 0;
@@ -1076,7 +1146,7 @@ function drawLineChart(id, seriesLabels, seriesData, colors, labels, dsOverrides
 }
 
 // ─────────────────────────────────────────────
-//  INIT
+//  SIDEBAR DATE
 // ─────────────────────────────────────────────
 
 function updateSidebarDate() {
@@ -1085,178 +1155,10 @@ function updateSidebarDate() {
 }
 
 // ─────────────────────────────────────────────
-//  AUTH — Login / Register / Session
+//  INIT — Direct start, no auth
 // ─────────────────────────────────────────────
 
-let currentUser = null;
-
-function showLogin() {
-  currentUser = null;
-  document.getElementById('login-screen').hidden = false;
-  document.getElementById('app-shell').hidden = true;
-  document.getElementById('login-form').hidden = false;
-  document.getElementById('register-form').hidden = true;
-  document.getElementById('login-error').hidden = true;
-  document.getElementById('register-error').hidden = true;
-  document.getElementById('register-success').hidden = true;
-}
-
-function showApp(user) {
-  currentUser = user;
-  document.getElementById('login-screen').hidden = true;
-  document.getElementById('app-shell').hidden = false;
-
-  // Update user menu
-  const initials = user.nome.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
-  document.getElementById('user-avatar').textContent = initials;
-  document.getElementById('user-name').textContent = user.nome.split(' ')[0];
-  document.getElementById('user-dropdown-info').innerHTML =
-    `<strong>${escHtml(user.nome)}</strong>${escHtml(user.email)}<br><span style="font-size:.72rem;color:var(--text-light)">${user.perfil==='admin'?'Administrador':'Usuario'}</span>`;
-
-  // Show admin nav if admin
-  const adminNav = document.getElementById('nav-admin');
-  if (adminNav) adminNav.hidden = user.perfil !== 'admin';
-}
-
-async function checkSession() {
-  try {
-    const res = await fetch('/api/auth/me');
-    const data = await res.json();
-    if (data.user) {
-      showApp(data.user);
-      return true;
-    }
-  } catch(_){}
-  return false;
-}
-
-async function doLogin(email, senha) {
-  const res = await fetch('/api/auth/login', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ email, senha })
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Erro ao fazer login');
-  return data.user;
-}
-
-async function doRegister(nome, email, senha) {
-  const res = await fetch('/api/auth/register', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ nome, email, senha })
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Erro ao criar conta');
-  return data.message;
-}
-
-async function doLogout() {
-  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch(_){}
-  showLogin();
-  window.location.hash = '';
-}
-
-// ─────────────────────────────────────────────
-//  ADMIN — User Management
-// ─────────────────────────────────────────────
-
-async function renderAdmin() {
-  const main = document.getElementById('main-content');
-  if (!currentUser || currentUser.perfil !== 'admin') {
-    main.innerHTML = '<div class="empty-state"><h3>Acesso restrito</h3><p>Somente administradores podem acessar esta pagina.</p></div>';
-    return;
-  }
-
-  const statusFilter = state.adminFilter || '';
-
-  let url = '/admin/usuarios';
-  if (statusFilter) url += `?status=${statusFilter}`;
-
-  const users = await api.get(url);
-
-  const statusBadge = (s) => {
-    const map = { pendente: 'badge-warning', aprovado: 'badge-success', recusado: 'badge-danger' };
-    const labels = { pendente: 'Pendente', aprovado: 'Aprovado', recusado: 'Recusado' };
-    return `<span class="badge ${map[s]||'badge-neutral'}">${labels[s]||s}</span>`;
-  };
-
-  const cards = users.map(u => {
-    const initials = u.nome.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
-    const perfLabel = u.perfil === 'admin' ? 'Admin' : 'Usuario';
-    const dataStr = u.created_at ? fmtDateTime(u.created_at) : '—';
-
-    let actions = '';
-    if (u.status === 'pendente') {
-      actions += `<button class="btn btn-success btn-sm" onclick="adminAction(${u.id},'aprovar')">Aprovar</button>`;
-      actions += `<button class="btn btn-danger btn-sm" onclick="adminAction(${u.id},'recusar')">Recusar</button>`;
-    }
-    if (u.status === 'recusado') {
-      actions += `<button class="btn btn-success btn-sm" onclick="adminAction(${u.id},'aprovar')">Aprovar</button>`;
-    }
-    if (u.id !== currentUser.id) {
-      actions += `<button class="btn btn-outline btn-sm" onclick="adminDelete(${u.id},'${escHtml(u.nome)}')">Excluir</button>`;
-    }
-
-    return `
-      <div class="admin-user-card">
-        <div class="admin-user-avatar">${initials}</div>
-        <div class="admin-user-info">
-          <div class="admin-user-name">${escHtml(u.nome)} <span class="badge badge-neutral" style="font-size:.65rem">${perfLabel}</span></div>
-          <div class="admin-user-email">${escHtml(u.email)}</div>
-          <div class="admin-user-meta">Criado em ${dataStr} &middot; ${statusBadge(u.status)}</div>
-        </div>
-        <div class="admin-user-actions">${actions}</div>
-      </div>`;
-  }).join('');
-
-  const activeFilter = (v, l) => `<button class="btn ${statusFilter===v?'btn-primary':'btn-outline'} btn-sm" onclick="adminFilterStatus('${v}')">${l}</button>`;
-
-  main.innerHTML = `
-    <div class="page-header">
-      <div><h2>Gestao de Usuarios</h2><p>${users.length} usuario(s)</p></div>
-    </div>
-    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
-      ${activeFilter('','Todos')}
-      ${activeFilter('pendente','Pendentes')}
-      ${activeFilter('aprovado','Aprovados')}
-      ${activeFilter('recusado','Recusados')}
-    </div>
-    <div class="admin-users-grid">${cards || '<div class="empty-state"><h3>Nenhum usuario encontrado</h3></div>'}</div>`;
-}
-
-async function adminAction(uid, action) {
-  try {
-    await api.post(`/admin/usuarios/${uid}/${action}`);
-    toast(action==='aprovar' ? 'Usuario aprovado' : 'Usuario recusado', 'success');
-    renderAdmin();
-  } catch(err) { toast(err.message, 'error'); }
-}
-
-async function adminDelete(uid, nome) {
-  if (!confirm(`Excluir usuario "${nome}"? Esta acao nao pode ser desfeita.`)) return;
-  try {
-    const res = await fetch(API+`/admin/usuarios/${uid}`, {
-      method: 'DELETE', headers: {'Content-Type':'application/json'}
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    toast('Usuario excluido', 'success');
-    renderAdmin();
-  } catch(err) { toast(err.message, 'error'); }
-}
-
-function adminFilterStatus(status) {
-  state.adminFilter = status;
-  renderAdmin();
-}
-
-// ─────────────────────────────────────────────
-//  INIT
-// ─────────────────────────────────────────────
-
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', () => {
   // Modal handlers
   document.getElementById('modal-close').addEventListener('click', closeModal);
   document.getElementById('modal-overlay').addEventListener('click', e => {
@@ -1271,103 +1173,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   updateSidebarDate();
 
-  // Auth form toggling
-  document.getElementById('show-register').addEventListener('click', e => {
-    e.preventDefault();
-    document.getElementById('login-form').hidden = true;
-    document.getElementById('register-form').hidden = false;
-    document.getElementById('register-error').hidden = true;
-    document.getElementById('register-success').hidden = true;
-  });
-  document.getElementById('show-login').addEventListener('click', e => {
-    e.preventDefault();
-    document.getElementById('login-form').hidden = false;
-    document.getElementById('register-form').hidden = true;
-    document.getElementById('login-error').hidden = true;
-  });
-
-  // Login form
-  document.getElementById('login-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const errEl = document.getElementById('login-error');
-    errEl.hidden = true;
-    const btn = document.getElementById('login-btn');
-    btn.disabled = true; btn.textContent = 'Entrando...';
-    try {
-      const user = await doLogin(
-        document.getElementById('login-email').value.trim(),
-        document.getElementById('login-senha').value
-      );
-      showApp(user);
-      if (!window.location.hash || window.location.hash==='#') window.location.hash = 'home';
-      else handleRoute();
-    } catch(err) {
-      errEl.textContent = err.message;
-      errEl.hidden = false;
-    } finally {
-      btn.disabled = false; btn.textContent = 'Entrar';
-    }
-  });
-
-  // Register form
-  document.getElementById('register-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const errEl = document.getElementById('register-error');
-    const sucEl = document.getElementById('register-success');
-    errEl.hidden = true; sucEl.hidden = true;
-
-    const senha  = document.getElementById('reg-senha').value;
-    const senha2 = document.getElementById('reg-senha2').value;
-    if (senha !== senha2) { errEl.textContent = 'As senhas nao coincidem.'; errEl.hidden = false; return; }
-
-    const btn = document.getElementById('register-btn');
-    btn.disabled = true; btn.textContent = 'Criando...';
-    try {
-      const msg = await doRegister(
-        document.getElementById('reg-nome').value.trim(),
-        document.getElementById('reg-email').value.trim(),
-        senha
-      );
-      sucEl.textContent = msg;
-      sucEl.hidden = false;
-      document.getElementById('register-form').reset();
-    } catch(err) {
-      errEl.textContent = err.message;
-      errEl.hidden = false;
-    } finally {
-      btn.disabled = false; btn.textContent = 'Criar conta';
-    }
-  });
-
-  // Logout
-  document.getElementById('btn-logout').addEventListener('click', doLogout);
-
-  // User dropdown toggle
-  document.getElementById('user-menu-btn').addEventListener('click', () => {
-    const dd = document.getElementById('user-dropdown');
-    dd.hidden = !dd.hidden;
-  });
-  document.addEventListener('click', e => {
-    const menu = document.getElementById('user-menu');
-    const dd   = document.getElementById('user-dropdown');
-    if (menu && dd && !menu.contains(e.target)) dd.hidden = true;
-  });
-
-  // Check existing session
-  const hasSession = await checkSession();
-  if (hasSession) {
-    window.addEventListener('hashchange', handleRoute);
-    if (!window.location.hash || window.location.hash==='#') {
-      window.location.hash = 'home';
-    } else {
-      handleRoute();
-    }
+  // Start routing
+  window.addEventListener('hashchange', handleRoute);
+  if (!window.location.hash || window.location.hash==='#') {
+    window.location.hash = 'home';
   } else {
-    showLogin();
-    // Still listen for hash changes so app works after login
-    window.addEventListener('hashchange', () => {
-      if (currentUser) handleRoute();
-    });
+    handleRoute();
   }
 });
 
@@ -1381,6 +1192,3 @@ window.showDischargeConfirm= showDischargeConfirm;
 window.executeDischarge    = executeDischarge;
 window.goChecklistFromBed  = goChecklistFromBed;
 window.closeModal          = closeModal;
-window.adminAction         = adminAction;
-window.adminDelete         = adminDelete;
-window.adminFilterStatus   = adminFilterStatus;

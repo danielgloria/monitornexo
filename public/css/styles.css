@@ -452,6 +452,7 @@ input, select, textarea { font-family: inherit; }
 .badge-danger   { background: var(--danger-bg);  color: var(--danger); }
 .badge-warning  { background: var(--warning-bg); color: var(--warning); }
 .badge-info     { background: var(--info-bg);    color: var(--info); }
+.badge-teal     { background: var(--teal-light); color: var(--teal); }
 .badge-neutral  { background: var(--neutral-bg); color: var(--neutral); }
 .badge-primary  { background: var(--primary-light); color: var(--primary); }
 

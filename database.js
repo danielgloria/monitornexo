@@ -1,11 +1,10 @@
 /**
  * Monitor NEXO — Database Layer (Node.js / sqlite3 async)
- * Schema: utis, leitos, ocupacoes, checklists, usuarios, tokens_aprovacao, sessions
+ * Schema: utis, leitos, ocupacoes, checklists
  */
 
 const sqlite3 = require('sqlite3').verbose();
 const path     = require('path');
-const bcrypt   = require('bcryptjs');
 
 const DB_PATH = path.join(__dirname, 'uti.db');
 
@@ -70,6 +69,20 @@ async function migrateDb() {
   const oldTable = await dbGet("SELECT name FROM sqlite_master WHERE type='table' AND name='patients'");
   if (oldTable) {
     try { await dbExec('ALTER TABLE patients RENAME TO patients_v1_legacy'); } catch (_) {}
+  }
+
+  // Migrate old previsao_alta values to new format
+  if (colNames.includes('previsao_alta')) {
+    const migrations = [
+      ["UPDATE checklists SET previsao_alta = 'alta_hoje' WHERE previsao_alta = 'hoje'", []],
+      ["UPDATE checklists SET previsao_alta = 'alta_24h' WHERE previsao_alta = '24h'", []],
+      ["UPDATE checklists SET previsao_alta = 'alta_48h' WHERE previsao_alta = '48h'", []],
+      ["UPDATE checklists SET previsao_alta = 'alta_72h' WHERE previsao_alta = '72h'", []],
+      ["UPDATE checklists SET previsao_alta = 'sem_previsao' WHERE previsao_alta = 'indefinida'", []],
+    ];
+    for (const [sql, params] of migrations) {
+      try { await dbRun(sql, params); } catch (_) {}
+    }
   }
 
   // If new schema exists but missing new columns, add them
@@ -153,44 +166,14 @@ async function createTables() {
       FOREIGN KEY (leito_id)   REFERENCES leitos(id),
       UNIQUE(ocupacao_id, data_registro)
     );
-
-    CREATE TABLE IF NOT EXISTS usuarios (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      nome          TEXT NOT NULL,
-      email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      senha_hash    TEXT NOT NULL,
-      perfil        TEXT NOT NULL DEFAULT 'usuario',
-      status        TEXT NOT NULL DEFAULT 'pendente',
-      created_at    DATETIME DEFAULT (datetime('now','localtime'))
-    );
-
-    CREATE TABLE IF NOT EXISTS tokens_aprovacao (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      usuario_id  INTEGER NOT NULL,
-      token       TEXT NOT NULL UNIQUE,
-      acao        TEXT NOT NULL,
-      usado       INTEGER DEFAULT 0,
-      expira_em   DATETIME NOT NULL,
-      created_at  DATETIME DEFAULT (datetime('now','localtime')),
-      FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      sid     TEXT PRIMARY KEY,
-      sess    TEXT NOT NULL,
-      expired DATETIME NOT NULL
-    );
   `);
 }
 
 // ─────────────────────────────────────────────
-//  SEED — UTIs, leitos, admin user
+//  SEED — UTIs and leitos
 // ─────────────────────────────────────────────
 
 async function seedData() {
-  const ADMIN_EMAIL    = 'danielvgloria@gmail.com';
-  const ADMIN_PASSWORD = 'Kamila@221093';
-
   const utiConfig = [
     { nome: 'UTI 1', leitos: 8 },
     { nome: 'UTI 2', leitos: 10 },
@@ -207,17 +190,6 @@ async function seedData() {
       }
     }
   }
-
-  // Seed admin user
-  const adminExists = await dbGet('SELECT id FROM usuarios WHERE email = ?', [ADMIN_EMAIL]);
-  if (!adminExists) {
-    const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-    await dbRun(
-      'INSERT INTO usuarios (nome, email, senha_hash, perfil, status) VALUES (?, ?, ?, ?, ?)',
-      ['Administrador', ADMIN_EMAIL, hash, 'admin', 'aprovado']
-    );
-    console.log('[SEED] Admin user created:', ADMIN_EMAIL);
-  }
 }
 
 // ─────────────────────────────────────────────
@@ -225,7 +197,6 @@ async function seedData() {
 // ─────────────────────────────────────────────
 
 async function initDb() {
-  // Enable WAL and foreign keys
   await dbRun('PRAGMA journal_mode = WAL');
   await dbRun('PRAGMA foreign_keys = ON');
 

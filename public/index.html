@@ -9,67 +9,8 @@
 </head>
 <body>
 
-<!-- ═══════════════════ LOGIN SCREEN ═══════════════════ -->
-<div class="login-screen" id="login-screen">
-  <div class="login-card">
-    <div class="login-brand">
-      <svg class="login-logo" viewBox="0 0 48 48" fill="none">
-        <rect x="6" y="8" width="36" height="28" rx="4" stroke="#1E3A8A" stroke-width="2.5"/>
-        <rect x="16" y="36" width="16" height="3" rx="1.2" fill="#1E3A8A"/>
-        <rect x="12" y="39" width="24" height="2.5" rx="1" fill="#94A3B8"/>
-        <polyline points="11,24 17,24 20,14 24,32 28,20 30,24 37,24" stroke="#3B82F6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <h1 class="login-title">Monitor <strong>NEXO</strong></h1>
-      <p class="login-subtitle">Plataforma de Monitoramento Assistencial</p>
-    </div>
-
-    <!-- Login Form -->
-    <form id="login-form" class="auth-form">
-      <div class="auth-error" id="login-error" hidden></div>
-      <div class="auth-field">
-        <label for="login-email">Email</label>
-        <input type="email" id="login-email" required placeholder="seu@email.com" autocomplete="email" />
-      </div>
-      <div class="auth-field">
-        <label for="login-senha">Senha</label>
-        <input type="password" id="login-senha" required placeholder="Sua senha" autocomplete="current-password" />
-      </div>
-      <button type="submit" class="auth-btn" id="login-btn">Entrar</button>
-      <div class="auth-link">
-        Ainda nao tem conta? <a href="#" id="show-register">Criar conta</a>
-      </div>
-    </form>
-
-    <!-- Register Form -->
-    <form id="register-form" class="auth-form" hidden>
-      <div class="auth-error" id="register-error" hidden></div>
-      <div class="auth-success" id="register-success" hidden></div>
-      <div class="auth-field">
-        <label for="reg-nome">Nome completo</label>
-        <input type="text" id="reg-nome" required placeholder="Seu nome completo" minlength="3" />
-      </div>
-      <div class="auth-field">
-        <label for="reg-email">Email</label>
-        <input type="email" id="reg-email" required placeholder="seu@email.com" autocomplete="email" />
-      </div>
-      <div class="auth-field">
-        <label for="reg-senha">Senha</label>
-        <input type="password" id="reg-senha" required placeholder="Minimo 8 caracteres" minlength="8" autocomplete="new-password" />
-      </div>
-      <div class="auth-field">
-        <label for="reg-senha2">Confirmar senha</label>
-        <input type="password" id="reg-senha2" required placeholder="Repita a senha" autocomplete="new-password" />
-      </div>
-      <button type="submit" class="auth-btn" id="register-btn">Criar conta</button>
-      <div class="auth-link">
-        Ja tem conta? <a href="#" id="show-login">Fazer login</a>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- ═══════════════════ APP (hidden until login) ═══════════════════ -->
-<div id="app-shell" hidden>
+<!-- ═══════════════════ APP ═══════════════════ -->
+<div id="app-shell">
 
 <!-- ═══════════════════ SIDEBAR ═══════════════════ -->
 <aside class="sidebar" id="sidebar">
@@ -106,14 +47,11 @@
     <a class="nav-item" href="#dashboard" data-page="dashboard">
       <span class="nav-icon">📊</span><span>Dashboard</span>
     </a>
-    <a class="nav-item" href="#admin" data-page="admin" id="nav-admin" hidden>
-      <span class="nav-icon">&#x2699;</span><span>Usuarios</span>
-    </a>
   </nav>
 
   <div class="sidebar-footer">
     <div class="sidebar-date" id="sidebar-date"></div>
-    <div class="sidebar-version">Monitor NEXO v2.0</div>
+    <div class="sidebar-version">Monitor NEXO v3.0</div>
   </div>
 </aside>
 
@@ -128,16 +66,6 @@
         <span class="census-dot"></span>
         <span id="census-count">&mdash;</span> internados
       </span>
-      <div class="user-menu" id="user-menu">
-        <button class="user-menu-btn" id="user-menu-btn">
-          <span class="user-avatar" id="user-avatar"></span>
-          <span class="user-name" id="user-name"></span>
-        </button>
-        <div class="user-dropdown" id="user-dropdown" hidden>
-          <div class="user-dropdown-info" id="user-dropdown-info"></div>
-          <button class="user-dropdown-item" id="btn-logout">Sair do sistema</button>
-        </div>
-      </div>
     </div>
   </header>
 
