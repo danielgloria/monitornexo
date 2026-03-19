@@ -1456,6 +1456,321 @@ input, select, textarea { font-family: inherit; }
 }
 
 /* ═══════════════════════════════════════════════════════════
+   AUTH SCREEN
+   ═══════════════════════════════════════════════════════════ */
+
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #EFF4FF 0%, #F5F7FA 50%, #CCFBF1 100%);
+  padding: 20px;
+}
+
+.auth-container {
+  width: 100%;
+  max-width: 420px;
+}
+
+.auth-brand {
+  text-align: center;
+  margin-bottom: 24px;
+}
+.auth-brand h1 {
+  font-size: 1.6rem;
+  color: var(--primary);
+  margin: 10px 0 4px;
+}
+.auth-brand strong { color: var(--teal); }
+.auth-subtitle {
+  font-size: .82rem;
+  color: var(--text-muted);
+}
+.auth-logo {
+  width: 56px;
+  height: 56px;
+}
+
+.auth-form {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 32px 28px;
+  box-shadow: var(--shadow-lg);
+}
+.auth-form h2 {
+  font-size: 1.2rem;
+  color: var(--text);
+  margin: 0 0 20px;
+  text-align: center;
+}
+
+.auth-field {
+  margin-bottom: 16px;
+}
+.auth-field label {
+  display: block;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+.auth-field input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: .92rem;
+  font-family: var(--font);
+  transition: border-color .2s;
+  box-sizing: border-box;
+}
+.auth-field input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(30,58,138,.1);
+}
+
+.auth-btn {
+  width: 100%;
+  padding: 12px;
+  font-size: .95rem;
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+.auth-links {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
+}
+.auth-links a {
+  font-size: .82rem;
+  color: var(--secondary);
+  text-decoration: none;
+}
+.auth-links a:hover { text-decoration: underline; }
+
+.auth-error {
+  background: var(--danger-bg);
+  color: var(--danger);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: .84rem;
+  margin-bottom: 12px;
+  border-left: 3px solid var(--danger);
+}
+.auth-success {
+  background: var(--success-bg);
+  color: var(--success);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: .84rem;
+  margin-bottom: 12px;
+  border-left: 3px solid var(--success);
+}
+
+.auth-desc {
+  font-size: .85rem;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.auth-lgpd {
+  background: var(--info-bg);
+  border: 1px solid #BAE6FD;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.auth-lgpd p {
+  font-size: .78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+.auth-lgpd strong { color: var(--info); }
+
+.auth-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 16px;
+  cursor: pointer;
+}
+.auth-checkbox input[type="checkbox"] {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+.auth-checkbox span {
+  font-size: .82rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.auth-checkbox a { color: var(--secondary); }
+
+/* ─── User Menu ─────────────────────────────────── */
+
+.user-menu {
+  position: relative;
+}
+.user-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: background .2s;
+}
+.user-menu-btn:hover {
+  background: rgba(0,0,0,.05);
+}
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .82rem;
+  font-weight: 700;
+}
+.user-name {
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--text);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-dropdown {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  min-width: 220px;
+  z-index: 1000;
+  overflow: hidden;
+}
+.user-dropdown-info {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.user-dropdown-info strong {
+  font-size: .88rem;
+  color: var(--text);
+}
+.user-dropdown-info small {
+  font-size: .76rem;
+  color: var(--text-muted);
+}
+.user-dropdown-info .badge {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.user-dropdown hr {
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--border-light);
+}
+.user-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  text-align: left;
+  background: none;
+  border: none;
+  font-size: .84rem;
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--font);
+}
+.user-dropdown-item:hover {
+  background: var(--bg);
+  color: var(--danger);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ADMIN PAGE
+   ═══════════════════════════════════════════════════════════ */
+
+.admin-page {
+  max-width: 1100px;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: var(--surface);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+
+.admin-tab {
+  flex: 1;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  font-size: .84rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font);
+  transition: all .2s;
+}
+.admin-tab:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.admin-tab.active {
+  background: var(--primary);
+  color: white;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: .76rem;
+  border-radius: 6px;
+}
+.btn-danger-outline {
+  background: none;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  cursor: pointer;
+  font-family: var(--font);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: .76rem;
+  transition: all .2s;
+}
+.btn-danger-outline:hover {
+  background: var(--danger);
+  color: white;
+}
+
+/* ═══════════════════════════════════════════════════════════
    RESPONSIVE v2
    ═══════════════════════════════════════════════════════════ */
 @media (max-width: 900px) {

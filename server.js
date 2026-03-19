@@ -1,15 +1,17 @@
 /**
  * Monitor NEXO — Backend Node.js / Express
- * Plataforma de Monitoramento Assistencial
+ * Plataforma de Monitoramento Assistencial v4.0
  *
  * API routes: UTIs, leitos, ocupacoes, checklists, dashboard, export CSV
- * Uses sqlite3 (async) for Render compatibility
+ * Auth: Supabase (JWT verification + admin panel)
+ * DB: sqlite3 (async) for clinical data
  */
 
 const express = require('express');
 const path    = require('path');
 
 const { dbRun, dbGet, dbAll, initDb } = require('./database');
+const { getSupabase, getSupabaseAdmin, requireAuth, requireAdmin, SUPABASE_URL, SUPABASE_ANON_KEY } = require('./supabase');
 
 // ─── App setup ────────────────────────────────
 const app = express();
@@ -17,11 +19,223 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─────────────────────────────────────────────
-//  UTIs
+//  SUPABASE CONFIG (public, used by frontend)
 // ─────────────────────────────────────────────
 
-// GET /api/utis
-app.get('/api/utis', async (req, res) => {
+app.get('/api/config', (req, res) => {
+  res.json({
+    supabaseUrl: SUPABASE_URL,
+    supabaseAnonKey: SUPABASE_ANON_KEY
+  });
+});
+
+// ─────────────────────────────────────────────
+//  AUTH: Profile & Session Info
+// ─────────────────────────────────────────────
+
+// GET /api/auth/me — retorna perfil do usuário logado
+app.get('/api/auth/me', requireAuth, async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) return res.status(500).json({ error: 'Supabase não configurado' });
+    const { data: profile, error } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .eq('id', req.user.id)
+      .single();
+
+    if (error) {
+      return res.json({
+        id: req.user.id,
+        email: req.user.email,
+        full_name: '',
+        role: 'user'
+      });
+    }
+
+    res.json({
+      id: req.user.id,
+      email: req.user.email,
+      full_name: profile.full_name || '',
+      role: profile.role || 'user',
+      created_at: profile.created_at
+    });
+  } catch (e) {
+    console.error('[AUTH_ME]', e);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// ─────────────────────────────────────────────
+//  ADMIN: User Management
+// ─────────────────────────────────────────────
+
+// GET /api/admin/users — lista todos os usuários
+app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) return res.status(500).json({ error: 'Service role não configurado' });
+
+    // Buscar users do auth
+    const { data: { users }, error: authErr } = await supabaseAdmin.auth.admin.listUsers();
+    if (authErr) throw authErr;
+
+    // Buscar profiles
+    const { data: profiles, error: profErr } = await supabaseAdmin
+      .from('profiles')
+      .select('*');
+
+    const profileMap = {};
+    if (profiles) profiles.forEach(p => { profileMap[p.id] = p; });
+
+    const result = users.map(u => ({
+      id: u.id,
+      email: u.email,
+      full_name: profileMap[u.id]?.full_name || '',
+      role: profileMap[u.id]?.role || 'user',
+      created_at: u.created_at,
+      last_sign_in_at: u.last_sign_in_at
+    }));
+
+    res.json(result);
+  } catch (e) {
+    console.error('[ADMIN_USERS]', e);
+    res.status(500).json({ error: 'Erro ao listar usuários' });
+  }
+});
+
+// PUT /api/admin/users/:id/role — alterar role
+app.put('/api/admin/users/:id/role', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) return res.status(500).json({ error: 'Service role não configurado' });
+
+    const targetId = req.params.id;
+    const newRole = req.body.role;
+
+    if (!['admin', 'user'].includes(newRole)) {
+      return res.status(400).json({ error: 'Role inválida. Use "admin" ou "user".' });
+    }
+
+    // Não permitir rebaixar a si mesmo
+    if (targetId === req.user.id && newRole === 'user') {
+      return res.status(400).json({ error: 'Você não pode remover seus próprios privilégios de admin.' });
+    }
+
+    // Buscar role atual
+    const { data: oldProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('role')
+      .eq('id', targetId)
+      .single();
+
+    const oldRole = oldProfile?.role || 'user';
+
+    // Atualizar
+    const { error } = await supabaseAdmin
+      .from('profiles')
+      .update({ role: newRole, updated_at: new Date().toISOString() })
+      .eq('id', targetId);
+
+    if (error) throw error;
+
+    // Buscar email do target
+    const { data: { user: targetUser } } = await supabaseAdmin.auth.admin.getUserById(targetId);
+
+    // Log
+    await supabaseAdmin.from('activity_logs').insert({
+      action: 'role_changed',
+      target_user_id: targetId,
+      target_email: targetUser?.email || '',
+      performed_by: req.user.id,
+      performed_email: req.user.email,
+      details: { old_role: oldRole, new_role: newRole }
+    });
+
+    res.json({ message: `Permissão alterada para ${newRole}` });
+  } catch (e) {
+    console.error('[ADMIN_ROLE]', e);
+    res.status(500).json({ error: 'Erro ao alterar permissão' });
+  }
+});
+
+// DELETE /api/admin/users/:id — deletar usuário
+app.delete('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) return res.status(500).json({ error: 'Service role não configurado' });
+
+    const targetId = req.params.id;
+
+    // Não permitir deletar a si mesmo
+    if (targetId === req.user.id) {
+      return res.status(400).json({ error: 'Você não pode excluir sua própria conta.' });
+    }
+
+    // Buscar email antes de deletar
+    const { data: { user: targetUser } } = await supabaseAdmin.auth.admin.getUserById(targetId);
+
+    // Log antes de deletar (o trigger on_auth_user_deleted também loga)
+    await supabaseAdmin.from('activity_logs').insert({
+      action: 'account_deleted_by_admin',
+      target_user_id: targetId,
+      target_email: targetUser?.email || '',
+      performed_by: req.user.id,
+      performed_email: req.user.email,
+      details: { method: 'admin_panel' }
+    });
+
+    // Deletar do auth (cascade deleta o profile)
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(targetId);
+    if (error) throw error;
+
+    res.json({ message: 'Usuário excluído com sucesso' });
+  } catch (e) {
+    console.error('[ADMIN_DELETE]', e);
+    res.status(500).json({ error: 'Erro ao excluir usuário' });
+  }
+});
+
+// GET /api/admin/logs — logs de atividade
+app.get('/api/admin/logs', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) return res.status(500).json({ error: 'Service role não configurado' });
+
+    const { data, error } = await supabaseAdmin
+      .from('activity_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[ADMIN_LOGS]', e);
+    res.status(500).json({ error: 'Erro ao buscar logs' });
+  }
+});
+
+// DELETE /api/admin/ocupacoes/:id — admin deletar ocupação
+app.delete('/api/admin/ocupacoes/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const oid = Number(req.params.id);
+    // Deletar checklists associados
+    await dbRun('DELETE FROM checklists WHERE ocupacao_id = ?', [oid]);
+    // Deletar ocupação
+    await dbRun('DELETE FROM ocupacoes WHERE id = ?', [oid]);
+    res.json({ message: 'Registro excluído com sucesso' });
+  } catch (e) {
+    console.error('[ADMIN_DEL_OCC]', e);
+    res.status(500).json({ error: 'Erro ao excluir registro' });
+  }
+});
+
+// ─────────────────────────────────────────────
+//  UTIs  (protegidas por auth)
+// ─────────────────────────────────────────────
+
+app.get('/api/utis', requireAuth, async (req, res) => {
   try {
     const rows = await dbAll(`
       SELECT u.id, u.nome,
@@ -45,8 +259,7 @@ app.get('/api/utis', async (req, res) => {
 //  LEITOS
 // ─────────────────────────────────────────────
 
-// GET /api/utis/:id/leitos
-app.get('/api/utis/:id/leitos', async (req, res) => {
+app.get('/api/utis/:id/leitos', requireAuth, async (req, res) => {
   try {
     const rows = await dbAll(`
       SELECT
@@ -72,8 +285,7 @@ app.get('/api/utis/:id/leitos', async (req, res) => {
 //  OCUPACOES
 // ─────────────────────────────────────────────
 
-// POST /api/leitos/:id/internar
-app.post('/api/leitos/:id/internar', async (req, res) => {
+app.post('/api/leitos/:id/internar', requireAuth, async (req, res) => {
   try {
     const leitoId = Number(req.params.id);
     const nome = (req.body.nome_paciente || '').trim();
@@ -100,8 +312,7 @@ app.post('/api/leitos/:id/internar', async (req, res) => {
   }
 });
 
-// POST /api/ocupacoes/:id/saida
-app.post('/api/ocupacoes/:id/saida', async (req, res) => {
+app.post('/api/ocupacoes/:id/saida', requireAuth, async (req, res) => {
   try {
     const oid    = Number(req.params.id);
     const motivo = req.body.motivo_saida;
@@ -126,8 +337,7 @@ app.post('/api/ocupacoes/:id/saida', async (req, res) => {
   }
 });
 
-// GET /api/historico
-app.get('/api/historico', async (req, res) => {
+app.get('/api/historico', requireAuth, async (req, res) => {
   try {
     let sql = `
       SELECT o.id, o.nome_paciente, o.data_nascimento,
@@ -160,8 +370,7 @@ app.get('/api/historico', async (req, res) => {
 //  CHECKLISTS
 // ─────────────────────────────────────────────
 
-// GET /api/checklists/ocupacao/:id/data/:data
-app.get('/api/checklists/ocupacao/:id/data/:data', async (req, res) => {
+app.get('/api/checklists/ocupacao/:id/data/:data', requireAuth, async (req, res) => {
   try {
     const row = await dbGet(
       'SELECT * FROM checklists WHERE ocupacao_id = ? AND data_registro = ?',
@@ -174,8 +383,7 @@ app.get('/api/checklists/ocupacao/:id/data/:data', async (req, res) => {
   }
 });
 
-// POST /api/checklists
-app.post('/api/checklists', async (req, res) => {
+app.post('/api/checklists', requireAuth, async (req, res) => {
   try {
     const d    = req.body;
     const oid  = d.ocupacao_id;
@@ -245,7 +453,7 @@ app.post('/api/checklists', async (req, res) => {
 //  DASHBOARD
 // ─────────────────────────────────────────────
 
-app.get('/api/dashboard', async (req, res) => {
+app.get('/api/dashboard', requireAuth, async (req, res) => {
   try {
     const hoje = new Date().toISOString().split('T')[0];
     const utiId = req.query.uti_id;
@@ -256,7 +464,6 @@ app.get('/api/dashboard', async (req, res) => {
     const uf = utiId ? ' AND l.uti_id = ?' : '';
     const up = utiId ? [Number(utiId)] : [];
 
-    // occ_stats — occupancy by UTI
     const occ_stats = await dbAll(`
       SELECT u.id, u.nome,
         COUNT(l.id) AS total,
@@ -268,14 +475,12 @@ app.get('/api/dashboard', async (req, res) => {
       WHERE u.ativo = 1 GROUP BY u.id ORDER BY u.id
     `);
 
-    // totalPacientes
     const tpRow = await dbGet(
       `SELECT COUNT(*) AS n FROM ocupacoes o JOIN leitos l ON l.id = o.leito_id WHERE o.ativa = 1${uf}`,
       up
     );
     const totalPacientes = tpRow ? tpRow.n : 0;
 
-    // hoje_stats — aggregated checklist stats for period
     const hs = await dbGet(`
       SELECT COUNT(*) AS total,
         SUM(CASE WHEN ventilacao = 'vmi' THEN 1 ELSE 0 END)  AS ventilados_vmi,
@@ -291,17 +496,14 @@ app.get('/api/dashboard', async (req, res) => {
       FROM checklists c JOIN leitos l ON l.id = c.leito_id
       WHERE c.data_registro BETWEEN ? AND ?${uf}
     `, [inicio, fim, ...up]);
-
     const hoje_stats = hs || {};
 
-    // checklist_count_hoje
     const chRow = await dbGet(
       `SELECT COUNT(*) AS n FROM checklists c JOIN leitos l ON l.id = c.leito_id WHERE c.data_registro = ?${uf}`,
       [hoje, ...up]
     );
     const checklist_count_hoje = chRow ? chRow.n : 0;
 
-    // avg_los
     const avgRow = await dbGet(`
       SELECT AVG(CAST(
         COALESCE(julianday(o.data_saida), julianday('now')) - julianday(o.data_entrada)
@@ -311,7 +513,6 @@ app.get('/api/dashboard', async (req, res) => {
     `, [inicio, fim, ...up]);
     const avg_los = avgRow && avgRow.v ? Math.round(avgRow.v * 10) / 10 : 0;
 
-    // trends
     const uf2 = utiId ? ` AND l2.uti_id = ${Number(utiId)}` : '';
     const trends = await dbAll(`
       SELECT c.data_registro,
@@ -333,18 +534,13 @@ app.get('/api/dashboard', async (req, res) => {
       GROUP BY c.data_registro ORDER BY c.data_registro
     `, [inicio, fim, ...up]);
 
-    // ── Previsão de Alta da UTI ──
-    // Para cada paciente ativo, buscar o checklist mais recente que tenha previsao_alta
+    // Previsão de Alta
     const paQuery = `
       SELECT
-        o.id AS ocupacao_id,
-        o.nome_paciente,
-        l.numero AS leito_numero,
-        l.id AS leito_id,
-        u.nome AS uti_nome,
-        u.id AS uti_id,
-        c.previsao_alta,
-        c.data_registro
+        o.id AS ocupacao_id, o.nome_paciente,
+        l.numero AS leito_numero, l.id AS leito_id,
+        u.nome AS uti_nome, u.id AS uti_id,
+        c.previsao_alta, c.data_registro
       FROM ocupacoes o
       JOIN leitos l ON l.id = o.leito_id
       JOIN utis u ON u.id = l.uti_id
@@ -357,8 +553,6 @@ app.get('/api/dashboard', async (req, res) => {
       ORDER BY u.id, CAST(l.numero AS INTEGER)
     `;
     const paPacientes = await dbAll(paQuery, up);
-
-    // Resumo agrupado
     const paResumo = { alta_hoje:0, alta_24h:0, alta_48h:0, alta_72h:0, sem_previsao:0, paliativos:0 };
     const pacientesComPrevisao = [];
     for (const p of paPacientes) {
@@ -377,10 +571,7 @@ app.get('/api/dashboard', async (req, res) => {
       trends,
       occ_stats,
       periodo: { inicio, fim },
-      previsao_alta: {
-        resumo: paResumo,
-        pacientes: pacientesComPrevisao
-      }
+      previsao_alta: { resumo: paResumo, pacientes: pacientesComPrevisao }
     });
   } catch (e) {
     console.error('[DASHBOARD]', e);
@@ -392,7 +583,7 @@ app.get('/api/dashboard', async (req, res) => {
 //  EXPORT CSV
 // ─────────────────────────────────────────────
 
-app.get('/api/export/csv', async (req, res) => {
+app.get('/api/export/csv', requireAuth, async (req, res) => {
   try {
     let sql = `
       SELECT u.nome AS uti, l.numero AS leito,
@@ -443,7 +634,7 @@ app.get('*', (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-//  START — init DB then listen
+//  START
 // ─────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
@@ -451,7 +642,11 @@ const PORT = process.env.PORT || 3000;
 initDb()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`\n[OK] Monitor NEXO rodando em http://localhost:${PORT}\n`);
+      console.log(`\n[OK] Monitor NEXO v4.0 rodando em http://localhost:${PORT}`);
+      if (!SUPABASE_ANON_KEY) {
+        console.log('[WARN] SUPABASE_ANON_KEY não definida — auth não funcionará');
+      }
+      console.log('');
     });
   })
   .catch(err => {

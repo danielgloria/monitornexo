@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
-   MONITOR NEXO — Plataforma de Monitoramento Assistencial
-   Fluxo: Home → UTI → Leito (modal) → Checklist / Registros / Dashboard
+   MONITOR NEXO — Plataforma de Monitoramento Assistencial v4.0
+   Auth: Supabase | SPA hash routing
    ═══════════════════════════════════════════════════════════ */
 
 'use strict';
@@ -20,7 +20,11 @@ const state = {
   dischargeCtx: null,
   charts:       {},
   dashFilter:   { utiId: '', start: thirtyDaysAgo(), end: todayISO() },
-  recFilter:    { utiId: '', di: thirtyDaysAgo(), df: todayISO(), motivo: '' }
+  recFilter:    { utiId: '', di: thirtyDaysAgo(), df: todayISO(), motivo: '' },
+  // Auth
+  supabase:     null,
+  session:      null,
+  currentUser:  null,  // { id, email, full_name, role }
 };
 
 // ─────────────────────────────────────────────
@@ -76,19 +80,34 @@ const LABELS = {
 function lbl(field, val) { return LABELS[field]?.[val] ?? val ?? '—'; }
 
 // ─────────────────────────────────────────────
-//  API
+//  API (with auth token)
 // ─────────────────────────────────────────────
 
 async function apiFetch(path, opts={}) {
-  const res = await fetch(API+path, { headers:{'Content-Type':'application/json'}, ...opts });
+  const headers = { 'Content-Type': 'application/json' };
+
+  // Attach Supabase auth token
+  if (state.session?.access_token) {
+    headers['Authorization'] = `Bearer ${state.session.access_token}`;
+  }
+
+  const res = await fetch(API+path, { headers, ...opts });
   const data = await res.json().catch(()=>({}));
+
+  // Handle auth_required — redirect to login
+  if (data.auth_required) {
+    await doLogout();
+    return;
+  }
+
   if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
   return data;
 }
 const api = {
-  get:  p      => apiFetch(p),
-  post: (p, b) => apiFetch(p, {method:'POST', body:JSON.stringify(b)}),
-  put:  (p, b) => apiFetch(p, {method:'PUT',  body:JSON.stringify(b)})
+  get:    p      => apiFetch(p),
+  post:   (p, b) => apiFetch(p, {method:'POST', body:JSON.stringify(b)}),
+  put:    (p, b) => apiFetch(p, {method:'PUT',  body:JSON.stringify(b)}),
+  delete: p      => apiFetch(p, {method:'DELETE'})
 };
 
 // ─────────────────────────────────────────────
@@ -120,6 +139,321 @@ function closeModal() {
   document.getElementById('modal-overlay').hidden = true;
 }
 
+// ═══════════════════════════════════════════════════════════
+//  AUTH — Supabase Integration
+// ═══════════════════════════════════════════════════════════
+
+async function initSupabase() {
+  try {
+    const config = await fetch('/api/config').then(r => r.json());
+    if (!config.supabaseUrl || !config.supabaseAnonKey) {
+      console.warn('[AUTH] Supabase não configurado');
+      return false;
+    }
+    state.supabase = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+
+    // Listen for auth state changes (token refresh, etc.)
+    state.supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'TOKEN_REFRESHED' && session) {
+        state.session = session;
+      }
+      if (event === 'SIGNED_OUT') {
+        state.session = null;
+        state.currentUser = null;
+        showAuthScreen();
+      }
+    });
+
+    return true;
+  } catch (e) {
+    console.error('[AUTH] Falha ao inicializar Supabase:', e);
+    return false;
+  }
+}
+
+async function checkSession() {
+  if (!state.supabase) return false;
+  try {
+    const { data: { session }, error } = await state.supabase.auth.getSession();
+    if (error || !session) return false;
+
+    state.session = session;
+
+    // Get profile from backend
+    const profile = await api.get('/auth/me');
+    state.currentUser = profile;
+    return true;
+  } catch (e) {
+    console.error('[AUTH] checkSession error:', e);
+    return false;
+  }
+}
+
+function showAuthScreen() {
+  document.getElementById('auth-screen').hidden = false;
+  document.getElementById('app-shell').hidden = true;
+  showLoginForm();
+}
+
+function showApp() {
+  document.getElementById('auth-screen').hidden = true;
+  document.getElementById('app-shell').hidden = false;
+  updateUserUI();
+}
+
+function updateUserUI() {
+  const user = state.currentUser;
+  if (!user) return;
+
+  const initial = (user.full_name || user.email || 'U')[0].toUpperCase();
+  const displayName = user.full_name || user.email.split('@')[0];
+
+  const avatar = document.getElementById('user-avatar');
+  const name = document.getElementById('user-name');
+  const dName = document.getElementById('dropdown-name');
+  const dEmail = document.getElementById('dropdown-email');
+  const dRole = document.getElementById('dropdown-role');
+
+  if (avatar) avatar.textContent = initial;
+  if (name) name.textContent = displayName;
+  if (dName) dName.textContent = user.full_name || displayName;
+  if (dEmail) dEmail.textContent = user.email;
+  if (dRole) dRole.textContent = user.role === 'admin' ? 'Administrador' : 'Usuário';
+
+  // Show/hide admin nav
+  const adminNav = document.querySelector('.nav-admin');
+  if (adminNav) adminNav.hidden = user.role !== 'admin';
+}
+
+// ─── Auth form switching ──────────────────────
+
+function showLoginForm() {
+  document.getElementById('login-form').hidden = false;
+  document.getElementById('register-form').hidden = true;
+  document.getElementById('forgot-form').hidden = true;
+  document.getElementById('reset-form').hidden = true;
+  clearAuthErrors();
+}
+
+function showRegisterForm() {
+  document.getElementById('login-form').hidden = true;
+  document.getElementById('register-form').hidden = false;
+  document.getElementById('forgot-form').hidden = true;
+  document.getElementById('reset-form').hidden = true;
+  clearAuthErrors();
+}
+
+function showForgotForm() {
+  document.getElementById('login-form').hidden = true;
+  document.getElementById('register-form').hidden = true;
+  document.getElementById('forgot-form').hidden = false;
+  document.getElementById('reset-form').hidden = true;
+  clearAuthErrors();
+}
+
+function showResetForm() {
+  document.getElementById('login-form').hidden = true;
+  document.getElementById('register-form').hidden = true;
+  document.getElementById('forgot-form').hidden = true;
+  document.getElementById('reset-form').hidden = false;
+  clearAuthErrors();
+}
+
+function clearAuthErrors() {
+  document.querySelectorAll('.auth-error, .auth-success').forEach(el => { el.hidden = true; el.textContent = ''; });
+}
+
+function showAuthError(id, msg) {
+  const el = document.getElementById(id);
+  if (el) { el.textContent = msg; el.hidden = false; }
+}
+
+function showAuthSuccess(id, msg) {
+  const el = document.getElementById(id);
+  if (el) { el.textContent = msg; el.hidden = false; }
+}
+
+// ─── Login ─────────────────────────────────────
+
+async function doLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn');
+
+  clearAuthErrors();
+  btn.disabled = true; btn.textContent = 'Entrando...';
+
+  try {
+    const { data, error } = await state.supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+
+    state.session = data.session;
+
+    // Load profile
+    const profile = await api.get('/auth/me');
+    state.currentUser = profile;
+
+    showApp();
+    updateSidebarDate();
+
+    // Start routing
+    window.addEventListener('hashchange', handleRoute);
+    if (!window.location.hash || window.location.hash === '#' || window.location.hash === '#login') {
+      window.location.hash = 'home';
+    } else {
+      handleRoute();
+    }
+
+    toast(`Bem-vindo, ${profile.full_name || email}!`, 'success');
+  } catch (err) {
+    const msg = err.message?.includes('Invalid login')
+      ? 'Email ou senha incorretos'
+      : err.message || 'Erro ao fazer login';
+    showAuthError('login-error', msg);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Entrar';
+  }
+}
+
+// ─── Register ──────────────────────────────────
+
+async function doRegister(e) {
+  e.preventDefault();
+  const name = document.getElementById('reg-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const password2 = document.getElementById('reg-password2').value;
+  const terms = document.getElementById('reg-terms').checked;
+  const btn = document.getElementById('register-btn');
+
+  clearAuthErrors();
+
+  if (password !== password2) {
+    showAuthError('register-error', 'As senhas não coincidem');
+    return;
+  }
+  if (password.length < 6) {
+    showAuthError('register-error', 'A senha deve ter no mínimo 6 caracteres');
+    return;
+  }
+  if (!terms) {
+    showAuthError('register-error', 'Você deve aceitar os termos de uso');
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Criando conta...';
+
+  try {
+    const { data, error } = await state.supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { full_name: name } }
+    });
+
+    if (error) throw error;
+
+    if (data.user && !data.session) {
+      // Email confirmation required
+      showAuthError('register-error', '');
+      showLoginForm();
+      toast('Conta criada! Verifique seu email para confirmar o cadastro.', 'success', 6000);
+    } else if (data.session) {
+      // Auto-confirmed
+      state.session = data.session;
+      const profile = await api.get('/auth/me');
+      state.currentUser = profile;
+      showApp();
+      updateSidebarDate();
+      window.addEventListener('hashchange', handleRoute);
+      window.location.hash = 'home';
+      toast('Conta criada com sucesso! Bem-vindo!', 'success');
+    }
+  } catch (err) {
+    const msg = err.message?.includes('already registered')
+      ? 'Este email já está cadastrado'
+      : err.message || 'Erro ao criar conta';
+    showAuthError('register-error', msg);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Criar Conta';
+  }
+}
+
+// ─── Forgot password ───────────────────────────
+
+async function doForgotPassword(e) {
+  e.preventDefault();
+  const email = document.getElementById('forgot-email').value.trim();
+  const btn = document.getElementById('forgot-btn');
+
+  clearAuthErrors();
+  btn.disabled = true; btn.textContent = 'Enviando...';
+
+  try {
+    const siteUrl = window.location.origin;
+    const { error } = await state.supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${siteUrl}/#reset-password`
+    });
+    if (error) throw error;
+
+    showAuthSuccess('forgot-success', 'Link de recuperação enviado! Verifique seu email.');
+  } catch (err) {
+    showAuthError('forgot-error', err.message || 'Erro ao enviar link');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Enviar link de recuperação';
+  }
+}
+
+// ─── Reset password ────────────────────────────
+
+async function doResetPassword(e) {
+  e.preventDefault();
+  const password = document.getElementById('reset-password').value;
+  const password2 = document.getElementById('reset-password2').value;
+  const btn = document.getElementById('reset-btn');
+
+  clearAuthErrors();
+
+  if (password !== password2) {
+    showAuthError('reset-error', 'As senhas não coincidem');
+    return;
+  }
+  if (password.length < 6) {
+    showAuthError('reset-error', 'A senha deve ter no mínimo 6 caracteres');
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Salvando...';
+
+  try {
+    const { error } = await state.supabase.auth.updateUser({ password });
+    if (error) throw error;
+
+    showAuthSuccess('reset-success', 'Senha alterada com sucesso! Redirecionando...');
+    setTimeout(() => {
+      showLoginForm();
+      toast('Senha alterada! Faça login com a nova senha.', 'success');
+    }, 2000);
+  } catch (err) {
+    showAuthError('reset-error', err.message || 'Erro ao alterar senha');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar nova senha';
+  }
+}
+
+// ─── Logout ────────────────────────────────────
+
+async function doLogout() {
+  if (state.supabase) {
+    await state.supabase.auth.signOut();
+  }
+  state.session = null;
+  state.currentUser = null;
+  window.removeEventListener('hashchange', handleRoute);
+  window.location.hash = '';
+  showAuthScreen();
+}
+
 // ─────────────────────────────────────────────
 //  ROUTER
 // ─────────────────────────────────────────────
@@ -135,6 +469,12 @@ async function handleRoute() {
   const page  = parts[0];
   state.page  = page;
 
+  // Redirect non-admin from admin page
+  if (page === 'admin' && state.currentUser?.role !== 'admin') {
+    window.location.hash = 'home';
+    return;
+  }
+
   // Active nav highlighting
   document.querySelectorAll('.nav-item').forEach(a => {
     const aPage  = a.dataset.page;
@@ -145,7 +485,7 @@ async function handleRoute() {
     a.classList.toggle('active', active);
   });
 
-  const titles = { home:'Inicio', uti:'Leitos da UTI', checklist:'Checklist Diario', registros:'Registros', dashboard:'Dashboard' };
+  const titles = { home:'Inicio', uti:'Leitos da UTI', checklist:'Checklist Diario', registros:'Registros', dashboard:'Dashboard', admin:'Administração' };
   document.getElementById('topbar-title').textContent = titles[page] || page;
 
   const main = document.getElementById('main-content');
@@ -157,6 +497,7 @@ async function handleRoute() {
     else if (page==='checklist') await renderChecklist(parseInt(parts[2]));
     else if (page==='registros') await renderRegistros();
     else if (page==='dashboard') await renderDashboard();
+    else if (page==='admin')     await renderAdmin();
     else main.innerHTML = '<p style="padding:40px;color:var(--text-muted)">Pagina nao encontrada.</p>';
   } catch(err) {
     main.innerHTML = `<div style="padding:40px;color:var(--danger)">Erro ao carregar: ${escHtml(err.message)}</div>`;
@@ -1145,6 +1486,246 @@ function drawLineChart(id, seriesLabels, seriesData, colors, labels, dsOverrides
   });
 }
 
+// ═══════════════════════════════════════════════════════════
+//  ADMIN PAGE
+// ═══════════════════════════════════════════════════════════
+
+async function renderAdmin() {
+  if (state.currentUser?.role !== 'admin') {
+    navigate('home');
+    return;
+  }
+
+  const main = document.getElementById('main-content');
+
+  main.innerHTML = `
+    <div class="admin-page">
+      <div class="admin-tabs">
+        <button class="admin-tab active" data-tab="users" onclick="switchAdminTab('users')">👥 Usuários</button>
+        <button class="admin-tab" data-tab="data" onclick="switchAdminTab('data')">🗄️ Dados</button>
+        <button class="admin-tab" data-tab="logs" onclick="switchAdminTab('logs')">📜 Logs</button>
+      </div>
+      <div id="admin-content">
+        <div class="page-loader"><div class="spinner"></div></div>
+      </div>
+    </div>`;
+
+  await loadAdminUsers();
+}
+
+function switchAdminTab(tab) {
+  document.querySelectorAll('.admin-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  if (tab === 'users') loadAdminUsers();
+  else if (tab === 'data') loadAdminData();
+  else if (tab === 'logs') loadAdminLogs();
+}
+
+// ─── Admin: Users ─────────────────────────────
+
+async function loadAdminUsers() {
+  const content = document.getElementById('admin-content');
+  content.innerHTML = '<div class="page-loader"><div class="spinner"></div></div>';
+
+  try {
+    const users = await api.get('/admin/users');
+
+    if (!users.length) {
+      content.innerHTML = '<div class="empty-state"><p>Nenhum usuário cadastrado.</p></div>';
+      return;
+    }
+
+    const rows = users.map(u => {
+      const isSelf = u.id === state.currentUser.id;
+      const roleBadge = u.role === 'admin'
+        ? '<span class="badge badge-primary">Admin</span>'
+        : '<span class="badge badge-neutral">Usuário</span>';
+      const toggleBtn = isSelf ? '' : `
+        <button class="btn btn-sm btn-outline" onclick="adminToggleRole('${u.id}', '${u.role}')">
+          ${u.role === 'admin' ? '⬇ Rebaixar' : '⬆ Promover'}
+        </button>`;
+      const deleteBtn = isSelf ? '' : `
+        <button class="btn btn-sm btn-danger-outline" onclick="adminDeleteUser('${u.id}', '${escHtml(u.email)}')">
+          🗑️
+        </button>`;
+
+      return `<tr>
+        <td><strong>${escHtml(u.full_name || '—')}</strong></td>
+        <td>${escHtml(u.email)}</td>
+        <td>${fmtDateTime(u.created_at)}</td>
+        <td>${u.last_sign_in_at ? fmtDateTime(u.last_sign_in_at) : '—'}</td>
+        <td>${roleBadge}</td>
+        <td style="white-space:nowrap">${toggleBtn} ${deleteBtn}</td>
+      </tr>`;
+    }).join('');
+
+    content.innerHTML = `
+      <div class="card" style="padding:16px">
+        <h3 style="margin:0 0 12px">Gerenciamento de Usuários</h3>
+        <div class="table-wrap" style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>Nome</th><th>Email</th><th>Cadastro</th><th>Último Login</th><th>Permissão</th><th>Ações</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  } catch (err) {
+    content.innerHTML = `<div style="padding:24px;color:var(--danger)">Erro: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function adminToggleRole(userId, currentRole) {
+  const newRole = currentRole === 'admin' ? 'user' : 'admin';
+  const action = newRole === 'admin' ? 'promover a Administrador' : 'rebaixar a Usuário';
+
+  if (!confirm(`Deseja ${action}?`)) return;
+
+  try {
+    await api.put(`/admin/users/${userId}/role`, { role: newRole });
+    toast(`Permissão alterada para ${newRole}`, 'success');
+    await loadAdminUsers();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function adminDeleteUser(userId, email) {
+  if (!confirm(`Excluir a conta de ${email}? Esta ação é irreversível.`)) return;
+  if (!confirm(`CONFIRMAR: Tem certeza que deseja excluir ${email}?`)) return;
+
+  try {
+    await api.delete(`/admin/users/${userId}`);
+    toast('Usuário excluído com sucesso', 'success');
+    await loadAdminUsers();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// ─── Admin: Data Management ──────────────────
+
+async function loadAdminData() {
+  const content = document.getElementById('admin-content');
+  content.innerHTML = '<div class="page-loader"><div class="spinner"></div></div>';
+
+  try {
+    const records = await api.get('/historico?data_inicio=2020-01-01&data_fim=2099-12-31');
+
+    if (!records.length) {
+      content.innerHTML = '<div class="empty-state"><p>Nenhum registro de ocupação encontrado.</p></div>';
+      return;
+    }
+
+    const rows = records.map(r => {
+      const motivoBadge = r.ativa
+        ? '<span class="badge motivo-badge-ativa">Ativo</span>'
+        : r.motivo_saida === 'alta'
+          ? '<span class="badge motivo-badge-alta">Alta</span>'
+          : '<span class="badge motivo-badge-obito">Óbito</span>';
+      return `<tr>
+        <td>${escHtml(r.uti_nome)}</td>
+        <td style="text-align:center">${escHtml(r.leito_numero)}</td>
+        <td><strong>${escHtml(r.nome_paciente)}</strong></td>
+        <td>${fmtDateTime(r.data_entrada)}</td>
+        <td>${motivoBadge}</td>
+        <td>
+          <button class="btn btn-sm btn-danger-outline" onclick="adminDeleteOcupacao(${r.id}, '${escHtml(r.nome_paciente)}')">
+            🗑️ Excluir
+          </button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    content.innerHTML = `
+      <div class="card" style="padding:16px">
+        <h3 style="margin:0 0 12px">Gerenciamento de Dados (Ocupações)</h3>
+        <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:12px">
+          ⚠ Excluir um registro remove também todos os checklists associados.
+        </p>
+        <div class="table-wrap" style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>UTI</th><th>Leito</th><th>Paciente</th><th>Entrada</th><th>Status</th><th>Ação</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  } catch (err) {
+    content.innerHTML = `<div style="padding:24px;color:var(--danger)">Erro: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function adminDeleteOcupacao(id, nome) {
+  if (!confirm(`Excluir o registro de ${nome}? Isso também excluirá os checklists associados.`)) return;
+
+  try {
+    await api.delete(`/admin/ocupacoes/${id}`);
+    toast('Registro excluído', 'success');
+    await loadAdminData();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// ─── Admin: Activity Logs ────────────────────
+
+async function loadAdminLogs() {
+  const content = document.getElementById('admin-content');
+  content.innerHTML = '<div class="page-loader"><div class="spinner"></div></div>';
+
+  try {
+    const logs = await api.get('/admin/logs');
+
+    if (!logs.length) {
+      content.innerHTML = '<div class="empty-state"><p>Nenhum log registrado.</p></div>';
+      return;
+    }
+
+    const actionLabels = {
+      account_created: '🟢 Conta criada',
+      account_deleted: '🔴 Conta excluída',
+      account_deleted_by_admin: '🔴 Conta excluída (admin)',
+      role_changed: '🔄 Permissão alterada',
+      login: '🔑 Login'
+    };
+
+    const rows = logs.map(l => {
+      const details = l.details || {};
+      let detailStr = '';
+      if (l.action === 'role_changed') {
+        detailStr = `${details.old_role || '?'} → ${details.new_role || '?'}`;
+      } else if (details.method) {
+        detailStr = details.method;
+      }
+
+      return `<tr>
+        <td>${actionLabels[l.action] || l.action}</td>
+        <td>${escHtml(l.target_email || '—')}</td>
+        <td>${fmtDateTime(l.created_at)}</td>
+        <td>${escHtml(l.performed_email || 'sistema')}</td>
+        <td style="font-size:.8rem;color:var(--text-muted)">${escHtml(detailStr)}</td>
+      </tr>`;
+    }).join('');
+
+    content.innerHTML = `
+      <div class="card" style="padding:16px">
+        <h3 style="margin:0 0 12px">Logs de Atividades</h3>
+        <div class="table-wrap" style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>Ação</th><th>Usuário Afetado</th><th>Data/Hora</th><th>Executado por</th><th>Detalhes</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  } catch (err) {
+    content.innerHTML = `<div style="padding:24px;color:var(--danger)">Erro: ${escHtml(err.message)}</div>`;
+  }
+}
+
 // ─────────────────────────────────────────────
 //  SIDEBAR DATE
 // ─────────────────────────────────────────────
@@ -1155,10 +1736,10 @@ function updateSidebarDate() {
 }
 
 // ─────────────────────────────────────────────
-//  INIT — Direct start, no auth
+//  INIT — Supabase Auth
 // ─────────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   // Modal handlers
   document.getElementById('modal-close').addEventListener('click', closeModal);
   document.getElementById('modal-overlay').addEventListener('click', e => {
@@ -1171,24 +1752,91 @@ document.addEventListener('DOMContentLoaded', () => {
     a.addEventListener('click', () => document.getElementById('sidebar').classList.remove('open'));
   });
 
+  // User menu dropdown
+  const userMenuBtn = document.getElementById('user-menu-btn');
+  const userDropdown = document.getElementById('user-dropdown');
+  if (userMenuBtn && userDropdown) {
+    userMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      userDropdown.hidden = !userDropdown.hidden;
+    });
+    document.addEventListener('click', () => { userDropdown.hidden = true; });
+  }
+
+  // Logout
+  document.getElementById('btn-logout')?.addEventListener('click', doLogout);
+
+  // Auth form events
+  document.getElementById('login-form')?.addEventListener('submit', doLogin);
+  document.getElementById('register-form')?.addEventListener('submit', doRegister);
+  document.getElementById('forgot-form')?.addEventListener('submit', doForgotPassword);
+  document.getElementById('reset-form')?.addEventListener('submit', doResetPassword);
+
+  // Auth form navigation
+  document.getElementById('show-register')?.addEventListener('click', e => { e.preventDefault(); showRegisterForm(); });
+  document.getElementById('show-forgot')?.addEventListener('click', e => { e.preventDefault(); showForgotForm(); });
+  document.getElementById('show-login-from-reg')?.addEventListener('click', e => { e.preventDefault(); showLoginForm(); });
+  document.getElementById('show-login-from-forgot')?.addEventListener('click', e => { e.preventDefault(); showLoginForm(); });
+
   updateSidebarDate();
 
-  // Start routing
-  window.addEventListener('hashchange', handleRoute);
-  if (!window.location.hash || window.location.hash==='#') {
-    window.location.hash = 'home';
+  // Initialize Supabase
+  const sbReady = await initSupabase();
+
+  if (!sbReady) {
+    // Supabase not configured — show error
+    document.getElementById('auth-screen').hidden = false;
+    document.getElementById('app-shell').hidden = true;
+    const container = document.querySelector('.auth-container');
+    if (container) {
+      container.innerHTML = `
+        <div class="auth-brand">
+          <h1>Monitor <strong>NEXO</strong></h1>
+        </div>
+        <div class="auth-form">
+          <div class="auth-error" style="display:block">
+            Supabase não configurado. Defina as variáveis de ambiente:<br/>
+            <code>SUPABASE_URL</code>, <code>SUPABASE_ANON_KEY</code>, <code>SUPABASE_SERVICE_ROLE_KEY</code>
+          </div>
+        </div>`;
+    }
+    return;
+  }
+
+  // Check for password reset flow (hash contains access_token)
+  const hashParams = new URLSearchParams(window.location.hash.substring(1));
+  if (hashParams.get('type') === 'recovery' || window.location.hash.includes('type=recovery')) {
+    showResetForm();
+    return;
+  }
+
+  // Check existing session
+  const hasSession = await checkSession();
+
+  if (hasSession) {
+    showApp();
+    window.addEventListener('hashchange', handleRoute);
+    if (!window.location.hash || window.location.hash === '#' || window.location.hash === '#login') {
+      window.location.hash = 'home';
+    } else {
+      handleRoute();
+    }
   } else {
-    handleRoute();
+    showAuthScreen();
   }
 });
 
 // Global onclick handlers
-window.navigate            = navigate;
-window.openBedModal        = openBedModal;
-window.showAdmitForm       = showAdmitForm;
-window.showDischargeStep1  = showDischargeStep1;
-window.selectMotivo        = selectMotivo;
-window.showDischargeConfirm= showDischargeConfirm;
-window.executeDischarge    = executeDischarge;
-window.goChecklistFromBed  = goChecklistFromBed;
-window.closeModal          = closeModal;
+window.navigate             = navigate;
+window.openBedModal         = openBedModal;
+window.showAdmitForm        = showAdmitForm;
+window.showDischargeStep1   = showDischargeStep1;
+window.selectMotivo         = selectMotivo;
+window.showDischargeConfirm = showDischargeConfirm;
+window.executeDischarge     = executeDischarge;
+window.goChecklistFromBed   = goChecklistFromBed;
+window.closeModal           = closeModal;
+window.switchAdminTab       = switchAdminTab;
+window.adminToggleRole      = adminToggleRole;
+window.adminDeleteUser      = adminDeleteUser;
+window.adminDeleteOcupacao  = adminDeleteOcupacao;
